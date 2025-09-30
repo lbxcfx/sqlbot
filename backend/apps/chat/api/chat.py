@@ -11,7 +11,7 @@ from sqlalchemy import and_, select
 
 from apps.chat.curd.chat import list_chats, get_chat_with_records, create_chat, rename_chat, \
     delete_chat, get_chat_chart_data, get_chat_predict_data, get_chat_with_records_with_data, get_chat_record_by_id
-from apps.chat.models.chat_model import CreateChat, ChatRecord, RenameChat, ChatQuestion, ExcelData
+from apps.chat.models.chat_model import CreateChat, ChatRecord, RenameChat, ChatQuestion, ExcelData, SmartMatchRequest
 from apps.chat.task.llm import LLMService
 from common.core.deps import CurrentAssistant, SessionDep, CurrentUser, Trans
 
@@ -103,7 +103,7 @@ async def start_chat(session: SessionDep, current_user: CurrentUser):
 
 
 @router.post("/smart_match_datasource")
-async def smart_match_datasource(session: SessionDep, current_user: CurrentUser, request_data: dict):
+async def smart_match_datasource(session: SessionDep, current_user: CurrentUser, request_data: SmartMatchRequest):
     """Smart match datasource based on user question
 
     Args:
@@ -118,7 +118,7 @@ async def smart_match_datasource(session: SessionDep, current_user: CurrentUser,
         from apps.datasource.crud.datasource import get_datasource_list
         from apps.datasource.crud.table import get_tables_by_ds_id
 
-        question = request_data.get('question', '').lower()
+        question = request_data.question.lower() if request_data.question else ''
         if not question:
             return {'datasource_id': None}
 

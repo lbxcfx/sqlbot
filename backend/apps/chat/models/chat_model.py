@@ -150,6 +150,10 @@ class RenameChat(BaseModel):
     brief: str = ''
 
 
+class SmartMatchRequest(BaseModel):
+    question: str
+
+
 class ChatInfo(BaseModel):
     id: Optional[int] = None
     create_time: datetime = None

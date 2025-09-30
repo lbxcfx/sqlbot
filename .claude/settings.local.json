@@ -13,7 +13,12 @@
       "Bash(timeout:*)",
       "Bash(docker logs:*)",
       "Bash(docker restart:*)",
-      "Bash(docker cp:*)"
+      "Bash(docker cp:*)",
+      "Bash(python:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(dir)",
+      "Bash(netstat:*)"
     ],
     "deny": [],
     "ask": []
