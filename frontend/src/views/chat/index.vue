@@ -154,20 +154,6 @@
               <div class="i-can">{{ welcomeDesc }}</div>
             </div>
 
-            <el-button
-              v-if="isCompletePage && currentChatId === undefined"
-              size="large"
-              type="primary"
-              class="greeting-btn"
-              @click="createNewChatSimple"
-            >
-              <span class="inner-icon">
-                <el-icon>
-                  <icon_new_chat_outlined />
-                </el-icon>
-              </span>
-              {{ t('qa.start_sqlbot') }}
-            </el-button>
           </div>
         </div>
         <div v-else-if="computedMessages.length == 0 && loading" class="welcome-content-block">
@@ -344,24 +330,8 @@
           </div>
         </el-scrollbar>
       </el-main>
-      <el-footer v-if="computedMessages.length > 0 || !isCompletePage" class="chat-footer">
+      <el-footer class="chat-footer">
         <div class="input-wrapper" @click="clickInput">
-          <div v-if="isCompletePage" class="datasource">
-            <template v-if="currentChat.datasource && currentChat.datasource_name">
-              {{ t('qa.selected_datasource') }}:
-              <img
-                v-if="currentChatEngineType"
-                style="margin-left: 4px; margin-right: 4px"
-                :src="currentChatEngineType"
-                width="16px"
-                height="16px"
-                alt=""
-              />
-              <span class="name">
-                {{ currentChat.datasource_name }}
-              </span>
-            </template>
-          </div>
           <el-input
             ref="inputRef"
             v-model="inputMessage"
@@ -590,12 +560,9 @@ const createNewChat = async () => {
     return
   }
   goEmpty()
-  if (!isCompletePage.value) {
-    currentChat.value = new ChatInfo()
-    currentChatId.value = undefined
-    return
-  }
-  chatCreatorRef.value?.showDs()
+  currentChat.value = new ChatInfo()
+  currentChatId.value = undefined
+  // 不再需要显示数据源选择弹窗，智能匹配会在用户输入问题时自动进行
 }
 
 function getChatList(callback?: () => void) {
@@ -738,6 +705,31 @@ const sendMessage = async ($event: any = {}) => {
     }, 300)
   }
   await assistantPrepareSend()
+
+  // 智能匹配数据源：如果是完整页面且没有当前聊天，则自动匹配数据源
+  if (isCompletePage.value && (currentChatId.value == null || typeof currentChatId.value == 'undefined')) {
+    try {
+      // 调用智能匹配 API
+      const matchResult = await chatApi.smartMatchDatasource(inputMessage.value)
+      if (matchResult.datasource_id) {
+        // 创建聊天
+        const newChat = await chatApi.startChat({ datasource: matchResult.datasource_id })
+        onChatCreatedQuick(newChat)
+      } else {
+        ElMessage.error(t('datasource.no_datasource_available'))
+        loading.value = false
+        isTyping.value = false
+        return
+      }
+    } catch (error: any) {
+      console.error('Smart match datasource failed:', error)
+      ElMessage.error(error.message || t('datasource.match_failed'))
+      loading.value = false
+      isTyping.value = false
+      return
+    }
+  }
+
   const currentRecord = new ChatRecord()
   currentRecord.create_time = new Date()
   currentRecord.chat_id = currentChatId.value
@@ -1096,52 +1088,19 @@ onMounted(() => {
       position: relative;
       max-width: 800px;
 
-      .datasource {
-        width: calc(100% - 2px);
-        position: absolute;
-        margin-left: 1px;
-        margin-top: 1px;
-        left: 0;
-        top: 0;
-        padding-top: 12px;
-        padding-left: 12px;
-        z-index: 10;
-        background: transparent;
-        line-height: 22px;
-        font-size: 14px;
-        font-weight: 400;
-        border-top-right-radius: 16px;
-        border-top-left-radius: 16px;
-        color: rgba(100, 106, 115, 1);
-        display: flex;
-        align-items: center;
-
-        .name {
-          color: rgba(31, 35, 41, 1);
-        }
-      }
-
       .input-area {
         border-color: #d9dcdf;
 
         :deep(.ed-textarea__inner) {
-          padding: 42px 12px 52px 12px;
+          padding: 12px 12px 52px 12px;
           background: #f8f9fa;
           border-radius: 16px;
           line-height: 24px;
-        }
+          font-weight: 400;
+          font-size: 16px;
 
-        &.is-assistant {
-          :deep(.ed-textarea__inner) {
-            padding: 12px 12px 52px 12px;
-            font-weight: 400;
-            font-size: 16px;
-            line-height: 24px;
-            border-radius: 16px;
-
-            &::placeholder {
-              color: #8f959e;
-            }
+          &::placeholder {
+            color: #8f959e;
           }
         }
       }

@@ -102,6 +102,74 @@ async def start_chat(session: SessionDep, current_user: CurrentUser):
         )
 
 
+@router.post("/smart_match_datasource")
+async def smart_match_datasource(session: SessionDep, current_user: CurrentUser, request_data: dict):
+    """Smart match datasource based on user question
+
+    Args:
+        session: Database session
+        current_user: Current user
+        request_data: Contains 'question' field
+
+    Returns:
+        Matched datasource ID or None
+    """
+    try:
+        from apps.datasource.crud.datasource import get_datasource_list
+        from apps.datasource.crud.table import get_tables_by_ds_id
+
+        question = request_data.get('question', '').lower()
+        if not question:
+            return {'datasource_id': None}
+
+        # Get all datasources for current user
+        datasources = get_datasource_list(session, current_user)
+        if not datasources:
+            return {'datasource_id': None}
+
+        # Simple keyword matching algorithm
+        best_match = None
+        best_score = 0
+
+        for ds in datasources:
+            score = 0
+
+            # Check datasource name
+            if ds.name and ds.name.lower() in question:
+                score += 10
+
+            # Check datasource description
+            if ds.description and ds.description.lower() in question:
+                score += 5
+
+            # Check table names
+            try:
+                tables = get_tables_by_ds_id(session, ds.id)
+                for table in tables:
+                    if table.table_name and table.table_name.lower() in question:
+                        score += 3
+                    if table.table_comment and table.table_comment.lower() in question:
+                        score += 2
+            except Exception:
+                pass
+
+            if score > best_score:
+                best_score = score
+                best_match = ds.id
+
+        # If no match found, return the first datasource
+        if best_match is None and datasources:
+            best_match = datasources[0].id
+
+        return {'datasource_id': best_match}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
 @router.post("/recommend_questions/{chat_record_id}")
 async def recommend_questions(session: SessionDep, current_user: CurrentUser, chat_record_id: int,
                               current_assistant: CurrentAssistant):

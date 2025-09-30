@@ -337,4 +337,6 @@ export const chatApi = {
       responseType: 'blob',
       requestOptions: { customError: true },
     }),
+  smartMatchDatasource: (question: string): Promise<{ datasource_id: number | null }> =>
+    request.post('/chat/smart_match_datasource', { question }),
 }
