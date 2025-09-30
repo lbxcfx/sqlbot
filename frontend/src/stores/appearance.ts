@@ -250,12 +250,27 @@ export const useAppearanceStore = defineStore('appearanceStore', {
       // if (!isDataEaseBi) {
       //   document.title = ''
       // }
-      const obj = LicenseGenerator.getLicense()
-      if (obj?.status !== 'valid') {
+      // 开源版本：如果 LicenseGenerator 不可用，使用默认外观
+      try {
+        if (typeof LicenseGenerator !== 'undefined' && LicenseGenerator.getLicense) {
+          const obj = LicenseGenerator.getLicense()
+          if (obj?.status !== 'valid') {
+            setCurrentColor('#1CBA90')
+            document.title = 'SQLBot'
+            setLinkIcon()
+            return
+          }
+        } else {
+          // LicenseGenerator 不可用，使用默认外观
+          setCurrentColor('#1CBA90')
+          document.title = 'SQLBot'
+          setLinkIcon()
+        }
+      } catch (error) {
+        console.warn('LicenseGenerator not available, using default appearance:', error)
         setCurrentColor('#1CBA90')
         document.title = 'SQLBot'
         setLinkIcon()
-        return
       }
       const resData = await request.get('/system/appearance/ui')
       this.loaded = true
