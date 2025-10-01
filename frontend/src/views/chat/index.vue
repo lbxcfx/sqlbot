@@ -379,7 +379,7 @@ import ChatListContainer from './ChatListContainer.vue'
 import ChatCreator from '@/views/chat/ChatCreator.vue'
 import ErrorInfo from './ErrorInfo.vue'
 import ChatToolBar from './ChatToolBar.vue'
-import { dsTypeWithImg } from '@/views/ds/js/ds-type'
+// import { dsTypeWithImg } from '@/views/ds/js/ds-type'
 import { useI18n } from 'vue-i18n'
 import { find, forEach } from 'lodash-es'
 import icon_new_chat_outlined from '@/assets/svg/icon_new_chat_outlined.svg'
@@ -590,9 +590,9 @@ function onClickHistory(chat: ChatInfo) {
   })
 }
 
-const currentChatEngineType = computed(() => {
-  return (dsTypeWithImg.find((ele) => currentChat.value.ds_type === ele.type) || {}).img
-})
+// const currentChatEngineType = computed(() => {
+//   return (dsTypeWithImg.find((ele) => currentChat.value.ds_type === ele.type) || {}).img
+// })
 
 function onChatDeleted(id: number) {
   console.info('deleted', id)
@@ -706,23 +706,14 @@ const sendMessage = async ($event: any = {}) => {
   }
   await assistantPrepareSend()
 
-  // 智能匹配数据源：如果是完整页面且没有当前聊天，则自动匹配数据源
+  // 使用LLM选择数据源：如果是完整页面且没有当前聊天，则创建新聊天让LLM自动选择数据源
   if (isCompletePage.value && (currentChatId.value == null || typeof currentChatId.value == 'undefined')) {
     try {
-      // 调用智能匹配 API
-      const matchResult = await chatApi.smartMatchDatasource(inputMessage.value)
-      if (matchResult.datasource_id) {
-        // 创建聊天
-        const newChat = await chatApi.startChat({ datasource: matchResult.datasource_id })
-        onChatCreatedQuick(newChat)
-      } else {
-        ElMessage.error(t('datasource.no_datasource_available'))
-        loading.value = false
-        isTyping.value = false
-        return
-      }
+      // 创建新聊天，不指定数据源，让LLM自动选择
+      const newChat = await chatApi.startChat({ datasource: null })
+      onChatCreatedQuick(newChat)
     } catch (error: any) {
-      console.error('Smart match datasource failed:', error)
+      console.error('Create chat failed:', error)
       ElMessage.error(error.message || t('datasource.match_failed'))
       loading.value = false
       isTyping.value = false

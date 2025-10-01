@@ -17,7 +17,90 @@ from common.utils.time import get_timestamp
 
 from common.core.config import settings
 from common.utils.utils import get_origin_from_referer
-from sqlbot_xpack.file_utils import SQLBotFileUtils
+
+# 开源版本：实现简单的文件工具类
+try:
+    from sqlbot_xpack.file_utils import SQLBotFileUtils
+    XPACK_AVAILABLE = True
+except ImportError:
+    XPACK_AVAILABLE = False
+    import uuid
+    import os
+    import shutil
+    from fastapi import UploadFile
+    from pathlib import Path
+
+    class SQLBotFileUtils:
+        """开源版本的文件工具类"""
+        # 文件存储目录
+        UPLOAD_DIR = Path(settings.MCP_IMAGE_PATH) / "uploads"
+
+        @classmethod
+        def _ensure_upload_dir(cls):
+            """确保上传目录存在"""
+            cls.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+        @classmethod
+        def get_file_path(cls, file_id: str) -> str:
+            """获取文件路径"""
+            cls._ensure_upload_dir()
+            return str(cls.UPLOAD_DIR / file_id)
+
+        @classmethod
+        def split_filename_and_flag(cls, filename: str) -> tuple:
+            """分割文件名和标志
+            例如: logo_myfile.png -> (myfile.png, logo)
+            """
+            if '_' in filename:
+                parts = filename.split('_', 1)
+                return parts[1], parts[0]
+            return filename, None
+
+        @classmethod
+        def check_file(cls, file: UploadFile, file_types: list, limit_file_size: int):
+            """检查文件类型和大小"""
+            # 检查文件类型
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            if file_types and file_ext not in file_types:
+                raise ValueError(f"File type {file_ext} not allowed. Allowed types: {file_types}")
+
+            # 检查文件大小
+            file.file.seek(0, 2)  # 移动到文件末尾
+            file_size = file.file.tell()
+            file.file.seek(0)  # 重置到文件开头
+
+            if file_size > limit_file_size:
+                raise ValueError(f"File size {file_size} exceeds limit {limit_file_size}")
+
+        @classmethod
+        async def upload(cls, file: UploadFile) -> str:
+            """上传文件并返回文件 ID"""
+            cls._ensure_upload_dir()
+
+            # 生成唯一文件 ID
+            file_ext = os.path.splitext(file.filename)[1]
+            file_id = f"{uuid.uuid4()}{file_ext}"
+            file_path = cls.UPLOAD_DIR / file_id
+
+            # 保存文件
+            with open(file_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+
+            return file_id
+
+        @classmethod
+        def detete_file(cls, file_id: str):
+            """删除文件"""
+            if not file_id:
+                return
+
+            file_path = cls.UPLOAD_DIR / file_id
+            if file_path.exists():
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass  # 忽略删除失败
 
 router = APIRouter(tags=["system/assistant"], prefix="/system/assistant")
 

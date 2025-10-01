@@ -2,9 +2,39 @@ import json
 from typing import List, Optional
 
 from sqlalchemy import and_
-from sqlbot_xpack.permissions.api.permission import transRecord2DTO
-from sqlbot_xpack.permissions.models.ds_permission import DsPermission, PermissionDTO
-from sqlbot_xpack.permissions.models.ds_rules import DsRules
+
+# 开源版本：Mock 权限模型
+try:
+    from sqlbot_xpack.permissions.api.permission import transRecord2DTO
+    from sqlbot_xpack.permissions.models.ds_permission import DsPermission, PermissionDTO
+    from sqlbot_xpack.permissions.models.ds_rules import DsRules
+    XPACK_AVAILABLE = True
+except ImportError:
+    XPACK_AVAILABLE = False
+    from pydantic import BaseModel
+    from sqlmodel import SQLModel, Field
+
+    # Mock 权限 DTO
+    class PermissionDTO(BaseModel):
+        pass
+
+    # Mock 数据源权限模型
+    class DsPermission(SQLModel, table=False):
+        id: int = None
+        table_id: int = None
+        type: str = None
+        permissions: str = None
+
+    # Mock 数据源规则模型
+    class DsRules(SQLModel, table=False):
+        id: int = None
+        permission_list: str = "[]"
+        user_list: str = "[]"
+
+    # Mock 权限转换函数
+    def transRecord2DTO(session, permission):
+        """开源版本返回空 DTO"""
+        return PermissionDTO()
 
 from apps.datasource.crud.row_permission import transFilterTree
 from apps.datasource.models.datasource import CoreDatasource, CoreField, CoreTable
@@ -22,7 +52,8 @@ def get_row_permission_filters(session: SessionDep, current_user: CurrentUser, d
 
     filters = []
     if is_normal_user(current_user):
-        contain_rules = session.query(DsRules).all()
+        # 开源版本：DsRules 是 Mock 类，不查询数据库
+        contain_rules = []
         for table in table_list:
             row_permissions = session.query(DsPermission).filter(
                 and_(DsPermission.table_id == table.id, DsPermission.type == 'row')).all()

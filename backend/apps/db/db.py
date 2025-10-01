@@ -10,8 +10,13 @@ import pymssql
 from apps.db.db_sql import get_table_sql, get_field_sql, get_version_sql
 from common.error import ParseSQLResultError
 
+# 开源版本：Make dmPython optional
+dmPython = None
 if platform.system() != "Darwin":
-    import dmPython
+    try:
+        import dmPython
+    except ImportError:
+        pass
 import pymysql
 import redshift_connector
 from sqlalchemy import create_engine, text, Engine
@@ -419,8 +424,29 @@ def get_fields(ds: CoreDatasource, table_name: str = None):
 
 
 def exec_sql(ds: CoreDatasource | AssistantOutDsSchema, sql: str, origin_column=False):
+    # 清理SQL语句
+    sql = sql.strip()
+    
+    # 移除末尾分号
     while sql.endswith(';'):
         sql = sql[:-1]
+    
+    # 修复常见的SQL语法问题
+    import re
+    
+    # 修复多余的点号问题
+    # 移除 SELECT 后的多余点号
+    sql = re.sub(r'SELECT\s+\.', 'SELECT', sql, flags=re.IGNORECASE)
+    # 移除 FROM 前的多余点号
+    sql = re.sub(r'\.\s+FROM', ' FROM', sql, flags=re.IGNORECASE)
+    # 移除字段名后的多余点号
+    sql = re.sub(r'(\w+)\s*\.\s*$', r'\1', sql, flags=re.IGNORECASE)
+    # 移除字段名后的多余点号（在逗号后）
+    sql = re.sub(r'(\w+)\s*\.\s*,', r'\1,', sql, flags=re.IGNORECASE)
+    
+    # 确保SQL不为空
+    if not sql.strip():
+        raise ParseSQLResultError("SQL query is empty after cleaning")
 
     db = DB.get_db(ds.type)
     if db.connect_type == ConnectType.sqlalchemy:

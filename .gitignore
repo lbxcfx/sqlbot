@@ -187,5 +187,7 @@ cython_debug/
 .DS_Store
 test.py
 
+# PostgreSQL data directory
+data/postgresql/
 
 !/.venv/

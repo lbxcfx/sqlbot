@@ -30,9 +30,33 @@ from apps.chat.curd.chat import save_question, save_sql_answer, save_sql, \
     get_last_execute_sql_error
 from apps.chat.models.chat_model import ChatQuestion, ChatRecord, Chat, RenameChat, ChatLog, OperationEnum, \
     ChatFinishStep
-from sqlbot_xpack.license.license_manage import SQLBotLicenseUtil
-from sqlbot_xpack.custom_prompt.curd.custom_prompt import find_custom_prompts
-from sqlbot_xpack.custom_prompt.models.custom_prompt_model import CustomPromptTypeEnum
+
+# 开源版本：优雅降级处理企业版许可证和自定义提示词
+try:
+    from sqlbot_xpack.license.license_manage import SQLBotLicenseUtil
+    from sqlbot_xpack.custom_prompt.curd.custom_prompt import find_custom_prompts
+    from sqlbot_xpack.custom_prompt.models.custom_prompt_model import CustomPromptTypeEnum
+    XPACK_AVAILABLE = True
+except ImportError:
+    XPACK_AVAILABLE = False
+    # Mock 许可证工具类
+    class SQLBotLicenseUtil:
+        @staticmethod
+        def valid() -> bool:
+            """开源版本始终返回 False，跳过企业版功能"""
+            return False
+
+    # Mock 自定义提示词查询函数
+    def find_custom_prompts(session, prompt_type, oid, ds_id):
+        """开源版本返回空字符串，不使用自定义提示词"""
+        return ""
+
+    # Mock 自定义提示词类型枚举
+    class CustomPromptTypeEnum:
+        ANALYSIS = "analysis"
+        PREDICT_DATA = "predict_data"
+        GENERATE_SQL = "generate_sql"
+
 from apps.data_training.curd.data_training import get_training_template
 from apps.datasource.crud.datasource import get_table_schema
 from apps.datasource.crud.permission import get_row_permission_filters, is_normal_user
@@ -42,7 +66,7 @@ from apps.db.db import exec_sql, get_version, check_connection
 from apps.system.crud.assistant import AssistantOutDs, AssistantOutDsFactory, get_assistant_ds
 from apps.system.schemas.system_schema import AssistantOutDsSchema
 from apps.terminology.curd.terminology import get_terminology_template
-from common.core.config import settings
+from common.core.config import settings, TABLE_EMBEDDING_ENABLED
 from common.core.db import engine
 from common.core.deps import CurrentAssistant, CurrentUser
 from common.error import SingleMessageError, SQLBotDBError, ParseSQLResultError, SQLBotDBConnectionError
@@ -398,36 +422,151 @@ class LLMService:
         if self.current_assistant and self.current_assistant.type != 4:
             _ds_list = get_assistant_ds(session=self.session, llm_service=self)
         else:
+            # 获取详细的数据源信息，包括表信息
             stmt = select(CoreDatasource.id, CoreDatasource.name, CoreDatasource.description).where(
                 and_(CoreDatasource.oid == self.current_user.oid))
-            _ds_list = [
-                {
+            _ds_list = []
+            for ds in self.session.exec(stmt):
+                # 获取每个数据源的表信息
+                from apps.datasource.crud.table import get_tables_by_ds_id
+                tables = get_tables_by_ds_id(self.session, ds.id)
+                
+                # 构建详细的数据源信息
+                ds_info = {
                     "id": ds.id,
                     "name": ds.name,
-                    "description": ds.description
+                    "description": ds.description,
+                    "tables": []
                 }
-                for ds in self.session.exec(stmt)
-            ]
+                
+                # 为每个表添加详细信息
+                for table in tables:
+                    table_info = {
+                        "table_name": table.table_name,
+                        "table_comment": table.table_comment or "",
+                        "fields": []
+                    }
+                    
+                    # 获取表的字段信息
+                    from apps.datasource.crud.field import get_fields_by_table_id
+                    fields = get_fields_by_table_id(self.session, table.id)
+                    for field in fields:
+                        field_info = {
+                            "field_name": field.field_name,
+                            "field_type": field.field_type,
+                            "field_comment": field.field_comment or ""
+                        }
+                        table_info["fields"].append(field_info)
+                    
+                    ds_info["tables"].append(table_info)
+                
+                _ds_list.append(ds_info)
             """ _ds_list = self.session.exec(select(CoreDatasource).options(
                 load_only(CoreDatasource.id, CoreDatasource.name, CoreDatasource.description))).all() """
         if not _ds_list:
             raise SingleMessageError('No available datasource configuration found')
-        ignore_auto_select = _ds_list and len(_ds_list) == 1
-        # ignore auto select ds
+        # 总是使用LLM选择数据源，不使用自动选择
+        ignore_auto_select = False
 
         full_thinking_text = ''
         full_text = ''
+        use_llm_selection = False  # Flag to track if LLM selection is needed
+
         if not ignore_auto_select:
-            if settings.TABLE_EMBEDDING_ENABLED:
-                ds = get_ds_embedding(self.session, self.current_user, _ds_list, self.out_ds_instance,
+            # 优先尝试embedding选择
+            if TABLE_EMBEDDING_ENABLED:
+                SQLBotLogUtil.info("=" * 80)
+                SQLBotLogUtil.info("=== DATASOURCE SELECTION - EMBEDDING ATTEMPT ===")
+                SQLBotLogUtil.info(f"用户问题: {self.chat_question.question}")
+                SQLBotLogUtil.info(f"数据源数量: {len(_ds_list)}")
+
+                embedding_result = get_ds_embedding(self.session, self.current_user, _ds_list, self.out_ds_instance,
                                       self.chat_question.question, self.current_assistant)
-                yield {'content': '{"id":' + str(ds.get('id')) + '}'}
+
+                if embedding_result and embedding_result.get('cosine_similarity') is not None:
+                    max_score = embedding_result.get('cosine_similarity')
+                    selected_ds = embedding_result
+                    all_scores = embedding_result.get('all_scores', [])
+
+                    # 详细日志：输出所有数据源的打分情况
+                    SQLBotLogUtil.info(f"=== Embedding 相似度打分结果 ===")
+                    for idx, score_info in enumerate(all_scores):
+                        ds_obj = score_info.get('ds')
+                        score = score_info.get('cosine_similarity', 0)
+                        ds_schema_preview = score_info.get('ds_schema', '')[:200] + '...' if len(score_info.get('ds_schema', '')) > 200 else score_info.get('ds_schema', '')
+                        SQLBotLogUtil.info(f"排名 #{idx+1}:")
+                        SQLBotLogUtil.info(f"  数据源ID: {ds_obj.id}")
+                        SQLBotLogUtil.info(f"  数据源名称: {ds_obj.name}")
+                        SQLBotLogUtil.info(f"  数据源描述: {ds_obj.description}")
+                        SQLBotLogUtil.info(f"  相似度分数: {score:.4f}")
+                        SQLBotLogUtil.info(f"  Schema预览: {ds_schema_preview}")
+
+                    SQLBotLogUtil.info(f"=== 最高分数: {max_score:.4f}, 阈值: {settings.DATASOURCE_EMBEDDING_THRESHOLD} ===")
+
+                    # 检查分数是否高于阈值
+                    if max_score >= settings.DATASOURCE_EMBEDDING_THRESHOLD:
+                        SQLBotLogUtil.info(f"✓ Embedding分数 {max_score:.4f} >= 阈值 {settings.DATASOURCE_EMBEDDING_THRESHOLD}")
+                        SQLBotLogUtil.info(f"✓ 使用Embedding选择的数据源: ID={selected_ds.get('id')}, Name={selected_ds.get('name')}")
+                        SQLBotLogUtil.info("=" * 80)
+                        yield {'content': '{"id":' + str(selected_ds.get('id')) + '}'}
+                        ds = selected_ds
+                    else:
+                        SQLBotLogUtil.info(f"✗ Embedding分数 {max_score:.4f} < 阈值 {settings.DATASOURCE_EMBEDDING_THRESHOLD}")
+                        SQLBotLogUtil.info(f"✗ Embedding分数过低，Fallback到LLM选择")
+                        SQLBotLogUtil.info("=" * 80)
+                        use_llm_selection = True
+                else:
+                    SQLBotLogUtil.info("✗ Embedding未返回有效结果，Fallback到LLM选择")
+                    SQLBotLogUtil.info("=" * 80)
+                    use_llm_selection = True
             else:
-                _ds_list_dict = []
+                SQLBotLogUtil.info("=== DATASOURCE SELECTION - LLM (TABLE_EMBEDDING_ENABLED=False) ===")
+                use_llm_selection = True
+
+            # 如果需要使用LLM选择
+            if use_llm_selection:
+                SQLBotLogUtil.info("=" * 80)
+                SQLBotLogUtil.info("=== DATASOURCE SELECTION - LLM ATTEMPT ===")
+                SQLBotLogUtil.info(f"用户问题: {self.chat_question.question}")
+
+                # 格式化数据源信息为key:value形式
+                formatted_ds_list = []
                 for _ds in _ds_list:
-                    _ds_list_dict.append(_ds)
+                    formatted_ds = f"""数据源ID: {_ds['id']}
+数据源名称: {_ds['name']}
+数据源描述: {_ds['description']}"""
+
+                    # 添加表信息
+                    for table in _ds.get('tables', []):
+                        formatted_ds += f"""
+表名称: {table['table_name']}
+表注释: {table['table_comment']}"""
+
+                        # 添加字段信息
+                        if table.get('fields'):
+                            field_names = [field['field_name'] for field in table['fields']]
+                            field_types = [f"{field['field_name']}({field['field_type']})" for field in table['fields']]
+                            field_comments = [f"{field['field_name']}: {field['field_comment']}" for field in table['fields'] if field['field_comment']]
+                            formatted_ds += f"""
+字段名称: {', '.join(field_names)}
+字段详情: {', '.join(field_types)}"""
+                            if field_comments:
+                                formatted_ds += f"""
+字段注释: {', '.join(field_comments)}"""
+
+                    formatted_ds_list.append(formatted_ds)
+
+                # 将格式化后的数据源信息传递给LLM
+                formatted_data = "\n\n".join(formatted_ds_list)
+
+                # 日志：输出发送给LLM的数据源信息
+                SQLBotLogUtil.info(f"=== 发送给LLM的数据源信息 ===")
+                for idx, formatted_ds in enumerate(formatted_ds_list):
+                    preview = formatted_ds[:300] + '...' if len(formatted_ds) > 300 else formatted_ds
+                    SQLBotLogUtil.info(f"数据源 #{idx+1}:\n{preview}")
+
                 datasource_msg.append(
-                    HumanMessage(self.chat_question.datasource_user_question(orjson.dumps(_ds_list_dict).decode())))
+                    HumanMessage(self.chat_question.datasource_user_question(formatted_data)))
 
                 self.current_logs[OperationEnum.CHOOSE_DATASOURCE] = start_log(session=self.session,
                                                                                ai_modal_id=self.chat_question.ai_modal_id,
@@ -439,6 +578,7 @@ class LLMService:
                                                                                              for
                                                                                              msg in datasource_msg])
 
+                SQLBotLogUtil.info("调用LLM进行数据源选择...")
                 token_usage = {}
                 res = process_stream(self.llm.stream(datasource_msg), token_usage)
                 for chunk in res:
@@ -459,10 +599,13 @@ class LLMService:
                                                                              reasoning_content=full_thinking_text,
                                                                              token_usage=token_usage)
 
+                SQLBotLogUtil.info(f"LLM返回结果: {full_text}")
                 json_str = extract_nested_json(full_text)
                 if json_str is None:
                     raise SingleMessageError(f'Cannot parse datasource from answer: {full_text}')
                 ds = orjson.loads(json_str)
+                SQLBotLogUtil.info(f"✓ LLM选择的数据源: {ds}")
+                SQLBotLogUtil.info("=" * 80)
 
         _error: Exception | None = None
         _datasource: int | None = None
@@ -514,7 +657,8 @@ class LLMService:
         except Exception as e:
             _error = e
 
-        if not ignore_auto_select and not settings.TABLE_EMBEDDING_ENABLED:
+        # 只有当使用LLM选择时才保存datasource选择的answer
+        if not ignore_auto_select and use_llm_selection:
             self.record = save_select_datasource_answer(session=self.session, record_id=self.record.id,
                                                         answer=orjson.dumps({'content': full_text}).decode(),
                                                         datasource=_datasource,
@@ -794,19 +938,25 @@ class LLMService:
 
         try:
             data = orjson.loads(json_str)
+            SQLBotLogUtil.info(f"[CHART CONFIG] LLM生成的原始图表配置: {orjson.dumps(data).decode()}")
+
             if data['type'] and data['type'] != 'error':
                 # todo type check
                 chart = data
+                SQLBotLogUtil.info(f"[CHART CONFIG] 图表类型: {chart.get('type')}")
+
                 if chart.get('columns'):
                     for v in chart.get('columns'):
                         v['value'] = v.get('value').lower()
                 if chart.get('axis'):
+                    SQLBotLogUtil.info(f"[CHART CONFIG] 处理前的axis配置: {orjson.dumps(chart.get('axis')).decode()}")
                     if chart.get('axis').get('x'):
                         chart.get('axis').get('x')['value'] = chart.get('axis').get('x').get('value').lower()
                     if chart.get('axis').get('y'):
                         chart.get('axis').get('y')['value'] = chart.get('axis').get('y').get('value').lower()
                     if chart.get('axis').get('series'):
                         chart.get('axis').get('series')['value'] = chart.get('axis').get('series').get('value').lower()
+                    SQLBotLogUtil.info(f"[CHART CONFIG] 处理后的axis配置: {orjson.dumps(chart.get('axis')).decode()}")
             elif data['type'] == 'error':
                 message = data['reason']
                 error = True
@@ -1314,6 +1464,8 @@ def request_picture(chat_id: int, record_id: int, chart: dict, data: dict):
         y = chart.get('axis').get('y')
         series = chart.get('axis').get('series')
 
+    SQLBotLogUtil.info(f"[G2 REQUEST] 图表axis原始配置 - x: {x}, y: {y}, series: {series}")
+
     axis = []
     for v in columns:
         axis.append({'name': v.get('name'), 'value': v.get('value')})
@@ -1330,6 +1482,9 @@ def request_picture(chat_id: int, record_id: int, chart: dict, data: dict):
         "data": orjson.dumps(data.get('data') if data.get('data') else []).decode(),
         "axis": orjson.dumps(axis).decode(),
     }
+
+    SQLBotLogUtil.info(f"[G2 REQUEST] 发送给G2-SSR的请求: type={chart['type']}, axis={orjson.dumps(axis).decode()}")
+    SQLBotLogUtil.info(f"[G2 REQUEST] 数据样本: {orjson.dumps(data.get('data')[:2] if data.get('data') else []).decode()}")
 
     requests.post(url=settings.MCP_IMAGE_HOST, json=request_obj)
 

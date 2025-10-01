@@ -1,24 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(docker run:*)",
-      "Bash(docker stop:*)",
-      "Bash(docker rm:*)",
-      "Bash(docker-compose up:*)",
-      "Bash(docker-compose:*)",
-      "Bash(docker exec:*)",
-      "Bash(docker build:*)",
-      "Bash(node:*)",
-      "Bash(npm:*)",
-      "Bash(timeout:*)",
-      "Bash(docker logs:*)",
-      "Bash(docker restart:*)",
-      "Bash(docker cp:*)",
-      "Bash(python:*)",
-      "Bash(tasklist)",
+      "Bash(python3:*)",
+      "Bash(docker:*)",
+      "Bash(powershell:*)",
       "Bash(findstr:*)",
-      "Bash(dir)",
-      "Bash(netstat:*)"
+      "Bash(timeout:*)",
+      "Bash(curl:*)",
+      "Bash(node:*)",
+      "Bash(npm install:*)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

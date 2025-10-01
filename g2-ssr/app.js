@@ -50,7 +50,23 @@ function getOptions(type, axis, data) {
 
 // 创建 Chart 和配置
 async function GenerateCharts(obj) {
-    const options = getOptions(obj.type, JSON.parse(obj.axis), JSON.parse(obj.data));
+    console.log(`[G2-SSR] 接收到图表请求 - type: ${obj.type}`);
+    const axis = JSON.parse(obj.axis);
+    const data = JSON.parse(obj.data);
+
+    console.log(`[G2-SSR] axis配置: ${JSON.stringify(axis)}`);
+    console.log(`[G2-SSR] 数据样本 (前2条): ${JSON.stringify(data.slice(0, 2))}`);
+
+    const options = getOptions(obj.type, axis, data);
+
+    if (!options) {
+        console.error(`[G2-SSR] 无法生成options，type: ${obj.type}, axis: ${JSON.stringify(axis)}`);
+        return;
+    }
+
+    console.log(`[G2-SSR] 生成的encode配置: ${JSON.stringify(options.encode)}`);
+    console.log(`[G2-SSR] 生成的axis配置: ${JSON.stringify(options.axis)}`);
+
     const chart = await createChart(options);
 
     // 导出

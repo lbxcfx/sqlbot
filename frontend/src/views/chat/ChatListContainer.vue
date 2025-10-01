@@ -150,7 +150,23 @@ async function doCreateNewChat() {
   if (!isCompletePage.value) {
     return
   }
-  chatCreatorRef.value?.showDs()
+  // 直接创建新对话，不传datasource，支持智能选择
+  _loading.value = true
+  chatApi
+    .startChat({})  // 不传datasource参数
+    .then((res) => {
+      const chat: ChatInfo | undefined = chatApi.toChatInfo(res)
+      if (chat == undefined) {
+        throw Error('chat is undefined')
+      }
+      emits('onChatCreated', chat)
+    })
+    .catch((e) => {
+      console.error('Failed to create chat:', e)
+    })
+    .finally(() => {
+      _loading.value = false
+    })
 }
 
 function onClickHistory(chat: Chat) {

@@ -388,8 +388,9 @@ class HttpService {
         resolve(script)
       }
 
-      script.onerror = (error) => {
-        console.error(`Failed to load script from ${url}:`, error)
+      script.onerror = () => {
+        // 开源版本：静默处理脚本加载失败
+        // console.error(`Failed to load script from ${url}:`, error)
         reject(new Error(`Failed to load script from ${url}`))
       }
 

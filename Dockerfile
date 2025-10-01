@@ -20,7 +20,7 @@ WORKDIR ${APP_HOME}
 
 COPY frontend /tmp/frontend
 
-RUN cd /tmp/frontend; npm install; npm run build; mv dist ${UI_HOME}/dist
+RUN cd /tmp/frontend; npm install --registry=https://registry.npmmirror.com; npm run build; mv dist ${UI_HOME}/dist
 
 # Install dependencies
 RUN test -f "./uv.lock" && \
@@ -43,7 +43,7 @@ WORKDIR /app
 COPY g2-ssr/app.js g2-ssr/package.json /app/
 COPY g2-ssr/charts/* /app/charts/
 
-RUN npm install
+RUN npm install --registry=https://registry.npmmirror.com
 
 # Runtime stage
 FROM registry.cn-qingdao.aliyuncs.com/dataease/sqlbot-python-pg:latest

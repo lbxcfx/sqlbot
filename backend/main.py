@@ -1,6 +1,22 @@
 import os
 
-import sqlbot_xpack
+# 开源版本：优雅降级处理企业版扩展包
+try:
+    import sqlbot_xpack
+    XPACK_AVAILABLE = True
+except ImportError:
+    XPACK_AVAILABLE = False
+    # Mock xpack 模块以避免启动失败
+    class XPackMock:
+        class core:
+            @staticmethod
+            async def clean_xpack_cache():
+                pass
+        @staticmethod
+        def init_fastapi_app(app):
+            pass
+    sqlbot_xpack = XPackMock()
+
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
@@ -91,6 +107,11 @@ if settings.all_cors_origins:
 app.add_middleware(TokenMiddleware)
 app.add_middleware(ResponseMiddleware)
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Mount static files for frontend
+frontend_dist_path = "/opt/sqlbot/frontend/dist"
+if os.path.exists(frontend_dist_path):
+    app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="frontend")
 
 # Register exception handlers
 app.add_exception_handler(StarletteHTTPException, exception_handler.http_exception_handler)

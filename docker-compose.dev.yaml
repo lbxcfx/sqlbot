@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: sqlbot-postgres-dev
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: Password123@pg
+      POSTGRES_DB: sqlbot
+    volumes:
+      - ./data/postgresql:/var/lib/postgresql/data

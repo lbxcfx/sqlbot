@@ -267,7 +267,8 @@ export const useAppearanceStore = defineStore('appearanceStore', {
           setLinkIcon()
         }
       } catch (error) {
-        console.warn('LicenseGenerator not available, using default appearance:', error)
+        // 开源版本：静默处理LicenseGenerator不可用的情况
+        // console.warn('LicenseGenerator not available, using default appearance:', error)
         setCurrentColor('#1CBA90')
         document.title = 'SQLBot'
         setLinkIcon()

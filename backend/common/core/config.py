@@ -105,8 +105,13 @@ class Settings(BaseSettings):
     PG_POOL_RECYCLE: int = 3600
     PG_POOL_PRE_PING: bool = True
 
-    TABLE_EMBEDDING_ENABLED: bool = False
     TABLE_EMBEDDING_COUNT: int = 10
+    # Datasource embedding selection threshold: if score < threshold, fallback to LLM
+    DATASOURCE_EMBEDDING_THRESHOLD: float = 0.5
 
+
+# TABLE_EMBEDDING_ENABLED 硬编码在代码中，不从环境变量读取
+# 如需修改，请直接修改此值: True=启用Embedding表筛选, False=禁用
+TABLE_EMBEDDING_ENABLED = True
 
 settings = Settings()  # type: ignore

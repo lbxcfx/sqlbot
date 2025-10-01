@@ -53,7 +53,14 @@ def get_ds_embedding(session: SessionDep, current_user: CurrentUser, _ds_list, o
                 [{"id": ele.get("id"), "name": ele.get("ds").name, "cosine_similarity": ele.get("cosine_similarity")}
                  for ele in _list]))
             ds = _list[0].get('ds')
-            return {"id": ds.id, "name": ds.name, "description": ds.description}
+            max_score = _list[0].get('cosine_similarity')
+            return {
+                "id": ds.id,
+                "name": ds.name,
+                "description": ds.description,
+                "cosine_similarity": max_score,
+                "all_scores": _list
+            }
         except Exception:
             traceback.print_exc()
-    return _list
+    return None

@@ -1,8 +1,8 @@
-import { ElMessage } from 'element-plus-secondary'
+// import { ElMessage } from 'element-plus-secondary'
 import { useCache } from '@/utils/useCache'
 import { useAppearanceStoreWithOut } from '@/stores/appearance'
 import { useUserStore } from '@/stores/user'
-import { request } from '@/utils/request'
+// import { request } from '@/utils/request'
 import type { Router } from 'vue-router'
 
 const appearanceStore = useAppearanceStoreWithOut()
@@ -20,7 +20,8 @@ export const watchRouter = (router: Router) => {
         LicenseGenerator.generateRouters(router)
       }
     } catch (error) {
-      console.warn('XPack features not available, continuing with open source mode:', error)
+      // 开源版本：静默处理XPack功能不可用的情况
+      // console.warn('XPack features not available, continuing with open source mode:', error)
     }
     if (to.path.startsWith('/login') && userStore.getUid) {
       next('/')
@@ -64,25 +65,6 @@ const accessCrossPermission = (to: any) => {
   )
 }
 const loadXpackStatic = () => {
-  if (document.getElementById('sqlbot_xpack_static')) {
-    return Promise.resolve()
-  }
-  const url = `/xpack_static/license-generator.umd.js?t=${Date.now()}`
-  return new Promise((resolve, reject) => {
-    request
-      .loadRemoteScript(url, 'sqlbot_xpack_static', () => {
-        LicenseGenerator?.init(import.meta.env.VITE_API_BASE_URL).then(() => {
-          resolve(true)
-        }).catch(() => {
-          // 开源版本：忽略 license 初始化失败
-          console.warn('License generator init failed, continuing without license validation')
-          resolve(true)
-        })
-      })
-      .catch((error) => {
-        // 开源版本：忽略 license 脚本加载失败
-        console.warn('Failed to load xpack_static script, continuing with open source mode:', error)
-        resolve(true) // 改为 resolve 而不是 reject
-      })
-  })
+  // 开源版本：直接返回成功，不加载XPack脚本
+  return Promise.resolve()
 }

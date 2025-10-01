@@ -4,7 +4,16 @@ from typing import List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import and_, text
-from sqlbot_xpack.permissions.models.ds_rules import DsRules
+
+# 开源版本：Mock DsRules（权限规则已在 permission.py 中定义）
+try:
+    from sqlbot_xpack.permissions.models.ds_rules import DsRules
+    XPACK_AVAILABLE = True
+except ImportError:
+    # 从 permission.py 导入 Mock 的 DsRules
+    from apps.datasource.crud.permission import DsRules
+    XPACK_AVAILABLE = False
+
 from sqlmodel import select
 
 from apps.datasource.crud.permission import get_column_permission_fields, get_row_permission_filters, is_normal_user
@@ -13,7 +22,7 @@ from apps.datasource.utils.utils import aes_decrypt
 from apps.db.constant import DB
 from apps.db.db import get_tables, get_fields, exec_sql, check_connection
 from apps.db.engine import get_engine_config, get_engine_conn
-from common.core.config import settings
+from common.core.config import settings, TABLE_EMBEDDING_ENABLED
 from common.core.deps import SessionDep, CurrentUser, Trans
 from common.utils.utils import deepcopy_ignore_extra
 from .table import get_tables_by_ds_id
@@ -83,6 +92,16 @@ def create_ds(session: SessionDep, trans: Trans, user: CurrentUser, create_ds: C
     # save tables and fields
     sync_table(session, ds, create_ds.tables)
     updateNum(session, ds)
+
+    # Auto-generate description if empty
+    if not ds.description or ds.description.strip() == '':
+        auto_description = generate_auto_description(session, ds)
+        if auto_description:
+            record.description = auto_description
+            session.add(record)
+            session.commit()
+            ds.description = auto_description
+
     return ds
 
 
@@ -91,6 +110,14 @@ def chooseTables(session: SessionDep, trans: Trans, id: int, tables: List[CoreTa
     check_status(session, trans, ds, True)
     sync_table(session, ds, tables)
     updateNum(session, ds)
+
+    # Auto-generate description if empty (when user selects/updates tables)
+    if not ds.description or ds.description.strip() == '':
+        auto_description = generate_auto_description(session, ds)
+        if auto_description:
+            ds.description = auto_description
+            session.add(ds)
+            session.commit()
 
 
 def update_ds(session: SessionDep, trans: Trans, user: CurrentUser, ds: CoreDatasource):
@@ -252,7 +279,8 @@ def preview(session: SessionDep, current_user: CurrentUser, id: int, data: Table
     f_list = [f for f in data.fields if f.checked]
     if is_normal_user(current_user):
         # column is checked, and, column permission for data.fields
-        contain_rules = session.query(DsRules).all()
+        # 开源版本：DsRules 是 Mock 类，不查询数据库
+        contain_rules = []
         f_list = get_column_permission_fields(session=session, current_user=current_user, table=data.table,
                                               fields=f_list, contain_rules=contain_rules)
 
@@ -335,10 +363,18 @@ def updateNum(session: SessionDep, ds: CoreDatasource):
 
 
 def get_table_obj_by_ds(session: SessionDep, current_user: CurrentUser, ds: CoreDatasource) -> List[TableAndFields]:
+    from common.utils.utils import SQLBotLogUtil
+    SQLBotLogUtil.info(f"=== get_table_obj_by_ds START === ds_id={ds.id}, ds_type={ds.type}")
+
     _list: List = []
     tables = session.query(CoreTable).filter(CoreTable.ds_id == ds.id).all()
+    SQLBotLogUtil.info(f"=== Found {len(tables)} tables in CoreTable for ds_id={ds.id}")
+    for table in tables:
+        SQLBotLogUtil.info(f"  Table: id={table.id}, name={table.table_name}, checked={table.checked}, comment={table.table_comment}")
+
     conf = DatasourceConf(**json.loads(aes_decrypt(ds.configuration))) if ds.type != "excel" else get_engine_config()
     schema = conf.dbSchema if conf.dbSchema is not None and conf.dbSchema != "" else conf.database
+    SQLBotLogUtil.info(f"=== Schema: {schema}")
 
     # get all field
     table_ids = [table.id for table in tables]
@@ -352,23 +388,40 @@ def get_table_obj_by_ds(session: SessionDep, current_user: CurrentUser, ds: Core
         else:
             fields_dict[field.table_id] = [field]
 
-    contain_rules = session.query(DsRules).all()
+    # 开源版本：DsRules 是 Mock 类，不查询数据库
+    contain_rules = []
     for table in tables:
         # fields = session.query(CoreField).filter(and_(CoreField.table_id == table.id, CoreField.checked == True)).all()
         fields = fields_dict.get(table.id)
+        SQLBotLogUtil.info(f"  Processing table {table.table_name}: found {len(fields) if fields else 0} checked fields")
 
         # do column permissions, filter fields
         fields = get_column_permission_fields(session=session, current_user=current_user, table=table, fields=fields,
                                               contain_rules=contain_rules)
-        _list.append(TableAndFields(schema=schema, table=table, fields=fields))
+        SQLBotLogUtil.info(f"  After permission filter: {len(fields) if fields else 0} fields")
+        if fields and len(fields) > 0:
+            _list.append(TableAndFields(schema=schema, table=table, fields=fields))
+            SQLBotLogUtil.info(f"  ✓ Table {table.table_name} added to result")
+        else:
+            SQLBotLogUtil.info(f"  ✗ Table {table.table_name} SKIPPED (no fields)")
+
+    SQLBotLogUtil.info(f"=== get_table_obj_by_ds END: returning {len(_list)} tables ===")
     return _list
 
 
 def get_table_schema(session: SessionDep, current_user: CurrentUser, ds: CoreDatasource, question: str,
                      embedding: bool = True) -> str:
+    from common.utils.utils import SQLBotLogUtil
+    SQLBotLogUtil.info(f"=== get_table_schema START === ds_id={ds.id}, ds_name={ds.name}, ds_type={ds.type}, question={question}, embedding={embedding}")
+
     schema_str = ""
     table_objs = get_table_obj_by_ds(session=session, current_user=current_user, ds=ds)
+    SQLBotLogUtil.info(f"=== get_table_obj_by_ds returned {len(table_objs)} tables")
+    for idx, obj in enumerate(table_objs):
+        SQLBotLogUtil.info(f"  Table {idx}: {obj.table.table_name}, comment={obj.table.custom_comment}, fields_count={len(obj.fields) if obj.fields else 0}")
+
     if len(table_objs) == 0:
+        SQLBotLogUtil.info("=== get_table_schema END: No tables found ===")
         return schema_str
     db_name = table_objs[0].schema
     schema_str += f"【DB_ID】 {db_name}\n【Schema】\n"
@@ -403,12 +456,24 @@ def get_table_schema(session: SessionDep, current_user: CurrentUser, ds: CoreDat
         all_tables.append(t_obj)
 
     # do table embedding
-    if embedding and tables and settings.TABLE_EMBEDDING_ENABLED:
+    from common.utils.utils import SQLBotLogUtil
+    SQLBotLogUtil.info(f"=== Before table embedding: {len(tables)} tables, embedding={embedding}, TABLE_EMBEDDING_ENABLED={TABLE_EMBEDDING_ENABLED}")
+    if embedding and tables and TABLE_EMBEDDING_ENABLED:
         tables = get_table_embedding(session, current_user, tables, question)
+        SQLBotLogUtil.info(f"=== After table embedding: {len(tables)} tables selected")
+    else:
+        SQLBotLogUtil.info(f"=== Table embedding SKIPPED (embedding={embedding}, has_tables={len(tables)>0}, enabled={TABLE_EMBEDDING_ENABLED})")
+
     # splice schema
     if tables:
-        for s in tables:
+        SQLBotLogUtil.info(f"=== Final tables to use: {len(tables)}")
+        for idx, s in enumerate(tables):
+            SQLBotLogUtil.info(f"  Final Table {idx}: {s.get('id')}")
             schema_str += s.get('schema_table')
+    else:
+        SQLBotLogUtil.info("=== No tables in final schema ===")
+
+    SQLBotLogUtil.info(f"=== get_table_schema END: schema_length={len(schema_str)} ===")
 
     # field relation
     if tables and ds.table_relation:
@@ -458,3 +523,49 @@ def get_table_schema(session: SessionDep, current_user: CurrentUser, ds: CoreDat
                     schema_str += f"{table_dict.get(int(ele.get('source').get('cell')))}.{field_dict.get(int(ele.get('source').get('port')))}={table_dict.get(int(ele.get('target').get('cell')))}.{field_dict.get(int(ele.get('target').get('port')))}\n"
 
     return schema_str
+
+
+def generate_auto_description(session: SessionDep, ds: CoreDatasource) -> str:
+    """
+    Auto-generate description for datasource based on tables and fields.
+    Returns a concise description listing all fields for smart routing.
+    """
+    try:
+        # Get all tables for this datasource
+        tables = session.query(CoreTable).filter(CoreTable.ds_id == ds.id).all()
+        if not tables:
+            return ""
+
+        # Get all fields for these tables
+        table_ids = [table.id for table in tables]
+        fields = session.query(CoreField).filter(
+            and_(CoreField.table_id.in_(table_ids), CoreField.checked == True)
+        ).order_by(CoreField.table_id, CoreField.field_index).all()
+
+        if not fields:
+            return ""
+
+        # Build field list
+        field_names = []
+        seen_fields = set()  # Deduplicate field names across tables
+        for field in fields:
+            if field.field_name not in seen_fields:
+                field_names.append(field.field_name)
+                seen_fields.add(field.field_name)
+
+        # Generate description
+        if len(tables) == 1:
+            table_info = f"表名：{tables[0].table_name}。" if tables[0].table_name else ""
+        else:
+            table_names = [t.table_name for t in tables if t.table_name]
+            table_info = f"包含{len(tables)}个表。" if table_names else ""
+
+        field_info = f"字段：{', '.join(field_names)}" if field_names else ""
+
+        description = f"{table_info}{field_info}"
+        return description.strip()
+
+    except Exception as e:
+        from common.utils.utils import SQLBotLogUtil
+        SQLBotLogUtil.error(f"Failed to generate auto description: {e}")
+        return ""
